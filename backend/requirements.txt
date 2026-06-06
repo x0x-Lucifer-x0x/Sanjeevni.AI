@@ -1,0 +1,34 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Config & env
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Supabase
+supabase==2.4.2
+
+# AI
+groq==0.9.0
+
+# File handling
+python-multipart==0.0.9
+pillow==10.3.0
+aiofiles==23.2.1
+
+# HTTP
+httpx==0.27.0
+
+# Image detection
+ultralytics==8.2.18
+numpy==1.26.4
+scipy==1.13.0
+opencv-python-headless==4.9.0.80
+
+# Realtime / websockets
+websockets==12.0
+
+# Utils
+python-jose[cryptography]==3.3.0
