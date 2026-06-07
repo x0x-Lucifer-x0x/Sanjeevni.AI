@@ -68,3 +68,8 @@ async def root():
         "docs": "/docs",
         "health": "/health",
     }
+
+from core.config import get_settings
+
+settings = get_settings()
+print("SUPABASE_URL =", settings.supabase_url)
