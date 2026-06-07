@@ -163,4 +163,4 @@ export const RESOURCE_ICONS: Record<ResourceType, string> = {
   volunteer:    '🙋',
   rescue:       '⛑️',
   medical_post: '🏥',
-}
+} 
