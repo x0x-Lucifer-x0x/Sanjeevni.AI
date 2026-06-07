@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { Incident, Resource, Dispatch, SEVERITY_COLORS, STATUS_LABELS, RESOURCE_ICONS } from '@/types'
-import { fetchIncidentTimeline, dispatchResource, updateIncidentStatus, markArrived, resolveDispatch } from '@/lib/api'
+import { fetchIncidentTimeline, dispatchResource, markArrived, resolveDispatch } from '@/lib/api'
 import { formatDistanceToNow } from 'date-fns'
 
 interface IncidentPanelProps {
@@ -19,16 +19,19 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
   const [activeDispatch, setActiveDispatch] = useState<Dispatch | null>(null)
 
   const sc = incident.severity ? SEVERITY_COLORS[incident.severity] : SEVERITY_COLORS.low
-
-  // Recommended resource type filter
   const recommendedType = incident.recommended_resource_type
-  const availableResources = resources.filter(r =>
-    r.status === 'available' &&
-    (!recommendedType || r.type === recommendedType || true) // show all, highlight recommended
-  )
+
+  // Sort resources: recommended type first, then available, then others
+  const sortedResources = [...resources]
+    .filter(r => r.status === 'available')
+    .sort((a, b) => {
+      const aRec = a.type === recommendedType ? 0 : 1
+      const bRec = b.type === recommendedType ? 0 : 1
+      return aRec - bRec
+    })
 
   useEffect(() => {
-    fetchIncidentTimeline(incident.id).then(r => setTimeline(r.timeline))
+    fetchIncidentTimeline(incident.id).then(r => setTimeline(r.timeline)).catch(() => {})
   }, [incident.id])
 
   const handleDispatch = async () => {
@@ -36,10 +39,7 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
     setDispatching(true)
     setError(null)
     try {
-      const dispatch = await dispatchResource({
-        incident_id: incident.id,
-        resource_id: selectedResource,
-      })
+      const dispatch = await dispatchResource({ incident_id: incident.id, resource_id: selectedResource })
       setActiveDispatch(dispatch)
       onDispatch(dispatch)
     } catch (err: any) {
@@ -47,11 +47,6 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
     } finally {
       setDispatching(false)
     }
-  }
-
-  const handleMarkArrived = async () => {
-    if (!activeDispatch) return
-    await markArrived(activeDispatch.id)
   }
 
   const handleResolve = async () => {
@@ -62,17 +57,14 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
 
   return (
     <div className="flex flex-col h-full bg-zinc-900 text-white overflow-hidden">
+
       {/* Header */}
       <div className="flex items-start gap-3 px-4 py-4 border-b border-zinc-800">
-        <div
-          className="w-3 h-3 rounded-full mt-1 flex-shrink-0"
-          style={{ background: sc.dot }}
-        />
+        <div className="w-3 h-3 rounded-full mt-1 flex-shrink-0" style={{ background: sc.dot }} />
         <div className="flex-1 min-w-0">
           <h2 className="text-white font-semibold text-sm">{incident.category || 'Analyzing...'}</h2>
           <p className="text-zinc-500 text-xs mt-0.5">
-            {formatDistanceToNow(new Date(incident.created_at), { addSuffix: true })} ·
-            {incident.report_method.toUpperCase()} report
+            {formatDistanceToNow(new Date(incident.created_at), { addSuffix: true })} · {incident.report_method.toUpperCase()}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -95,7 +87,7 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
           </div>
         )}
 
-        {/* Stats row */}
+        {/* Stats */}
         <div className="grid grid-cols-3 gap-2">
           <div className="bg-zinc-800 rounded-xl p-2.5 text-center">
             <p className="text-zinc-500 text-xs mb-0.5">Score</p>
@@ -121,42 +113,48 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
           </div>
         )}
 
-        {/* Dispatch section */}
+        {/* Dispatch — recommended on top */}
         {!activeDispatch && incident.status !== 'resolved' && (
           <div>
-            <p className="text-zinc-400 text-xs mb-2">Assign resource</p>
-            <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto">
-              {availableResources.length === 0 ? (
+            <p className="text-zinc-400 text-xs mb-2">
+              Assign resource
+              {recommendedType && <span className="text-green-400 ml-1">— {recommendedType} recommended</span>}
+            </p>
+            <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto">
+              {sortedResources.length === 0 ? (
                 <p className="text-zinc-600 text-xs">No available resources</p>
               ) : (
-                availableResources.map(r => (
-                  <button
-                    key={r.id}
-                    onClick={() => setSelectedResource(r.id === selectedResource ? null : r.id)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all text-xs
-                      ${selectedResource === r.id
-                        ? 'bg-blue-950 border-blue-700 text-white'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500'
-                      }`}
-                  >
-                    <span>{RESOURCE_ICONS[r.type]}</span>
-                    <span className="flex-1 font-medium">{r.name}</span>
-                    {r.type === recommendedType && (
-                      <span className="text-green-400 text-xs">✦ recommended</span>
-                    )}
-                  </button>
-                ))
+                sortedResources.map(r => {
+                  const isRec = r.type === recommendedType
+                  return (
+                    <button
+                      key={r.id}
+                      onClick={() => setSelectedResource(r.id === selectedResource ? null : r.id)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all text-xs
+                        ${selectedResource === r.id
+                          ? 'bg-blue-950 border-blue-700 text-white'
+                          : isRec
+                            ? 'bg-green-950/40 border-green-800 text-zinc-300 hover:border-green-600'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500'
+                        }`}
+                    >
+                      <span>{RESOURCE_ICONS[r.type]}</span>
+                      <span className="flex-1 font-medium">{r.name}</span>
+                      {isRec && (
+                        <span className="text-green-400 text-xs flex-shrink-0">✦ recommended</span>
+                      )}
+                    </button>
+                  )
+                })
               )}
             </div>
 
-            {error && (
-              <p className="text-red-400 text-xs mt-2">{error}</p>
-            )}
+            {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
 
             <button
               onClick={handleDispatch}
               disabled={!selectedResource || dispatching}
-              className="w-full mt-3 bg-red-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all"
+              className="w-full mt-3 bg-red-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all active:scale-95"
             >
               {dispatching ? '⏳ Dispatching...' : '🚀 Dispatch resource'}
             </button>
@@ -166,20 +164,18 @@ export default function IncidentPanel({ incident, resources, onDispatch, onClose
         {/* Active dispatch controls */}
         {activeDispatch && incident.status !== 'resolved' && (
           <div className="bg-green-950 border border-green-800 rounded-xl p-3 flex flex-col gap-2">
-            <p className="text-green-400 text-xs font-medium">✓ Resource dispatched — ETA {Math.ceil(activeDispatch.eta_seconds / 60)} min</p>
+            <p className="text-green-400 text-xs font-medium">
+              ✓ Dispatched — ETA {Math.ceil(activeDispatch.eta_seconds / 60)} min
+            </p>
             <div className="flex gap-2">
               <button
-                onClick={handleMarkArrived}
+                onClick={() => markArrived(activeDispatch.id)}
                 className="flex-1 bg-zinc-800 text-zinc-300 py-2 rounded-lg text-xs"
-              >
-                Mark arrived
-              </button>
+              >Mark arrived</button>
               <button
                 onClick={handleResolve}
                 className="flex-1 bg-green-700 text-white py-2 rounded-lg text-xs font-medium"
-              >
-                Resolve incident
-              </button>
+              >Resolve</button>
             </div>
           </div>
         )}
