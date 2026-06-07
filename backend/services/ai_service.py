@@ -139,22 +139,14 @@ async def generate_situation_brief(event_id: str, stats: dict, incidents: list) 
         for i in incidents[:10]
     ])
 
-    prompt = f"""You are the AI briefing system for Sanjeevani AI emergency command center.
+    prompt = f"""You are an emergency command center AI. Give a 1-2 sentence flash briefing. Be ultra-concise. Lead with the most critical fact. No fluff.
 
-Current situation stats:
-- Total active incidents: {stats.get('total', 0)}
-- Critical: {stats.get('critical', 0)}
-- High: {stats.get('high', 0)}
-- Medium: {stats.get('medium', 0)}
-- Low: {stats.get('low', 0)}
-- Resources available: {stats.get('resources_available', 0)}
-- Resources dispatched: {stats.get('resources_dispatched', 0)}
+Stats: {stats.get('total', 0)} active | {stats.get('critical', 0)} critical | {stats.get('high', 0)} high | {stats.get('resources_available', 0)} resources free
 
-Recent active incidents:
-{incident_summary if incident_summary else 'No active incidents'}
+Top incidents:
+{incident_summary if incident_summary else 'None'}
 
-Write a concise 2-3 sentence operational briefing for the command center operator. 
-Be direct, factual, and actionable. Mention specific priorities and any resource concerns."""
+Output: 1-2 punchy sentences. Example format: "3 critical incidents — Gate 4 cardiac, Gate 7 crush, Sector 5 earthquake. 4 of 12 resources deployed, recommend pre-position ambulance near Ghat." """
 
     try:
         response = await client.chat.completions.create(
