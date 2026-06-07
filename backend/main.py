@@ -18,11 +18,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"Sanjeevani AI backend starting — env={settings.app_env}")
+    logger.info(f"CORS origins: {settings.cors_origins_list}")
     logger.info(f"YOLO enabled: {settings.yolo_enabled}")
-    # Pre-load YOLO model on startup to avoid cold start on first image request
     if settings.yolo_enabled:
-        from services.yolo_service import get_yolo_model
-        get_yolo_model()
+        try:
+            from services.yolo_service import get_yolo_model
+            get_yolo_model()
+        except Exception as e:
+            logger.warning(f"YOLO preload failed (non-fatal): {e}")
     yield
     logger.info("Sanjeevani AI backend shutting down")
 
@@ -39,13 +42,13 @@ settings = get_settings()
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    # In development allow all origins; in production restrict to listed origins
+    allow_origins=["*"] if settings.app_env == "development" else settings.cors_origins_list,
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Routers
 app.include_router(incidents.router)
 app.include_router(resources.router)
 app.include_router(dispatch.router)
@@ -55,11 +58,7 @@ app.include_router(events.router)
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "service": "sanjeevani-ai",
-        "version": "1.0.0",
-    }
+    return {"status": "ok", "service": "sanjeevani-ai", "version": "1.0.0"}
 
 
 @app.get("/")
