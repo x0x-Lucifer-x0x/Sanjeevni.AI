@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+.turbo/
+out/
+
+# Env files — NEVER commit these
+.env
+.env.local
+.env.production
+backend/.env
+
+# Misc
+.DS_Store
+*.log
+.vercel/
+yolov8n.pt
+yolov8s.pt
