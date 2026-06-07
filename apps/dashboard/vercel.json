@@ -1,0 +1,12 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "installCommand": "npm install",
+  "env": {
+    "NEXT_PUBLIC_API_URL": "@sanjeevani-api-url",
+    "NEXT_PUBLIC_EVENT_ID": "@sanjeevani-event-id",
+    "NEXT_PUBLIC_SUPABASE_URL": "@sanjeevani-supabase-url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@sanjeevani-supabase-anon-key"
+  }
+}
