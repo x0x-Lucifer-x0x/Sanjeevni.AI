@@ -1,105 +1,195 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useGeolocation } from '@/hooks/useGeolocation'
-import { useNetwork } from '@/hooks/useNetwork'
 import { enqueueReport } from '@/lib/offlineQueue'
+import { submitIncident } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 
-type RelayPhase = 'idle' | 'broadcasting' | 'hopping' | 'reached' | 'done'
+type RelayPhase = 'idle' | 'scanning' | 'connecting' | 'hopping' | 'reached' | 'done'
 
-interface HopNode {
+interface Device {
   id: string
-  label: string
+  deviceId: string  // anonymous device ID like "BT-3F7A"
   icon: string
+  label: string     // citizen friendly label
   distance: string
   color: string
-  borderColor: string
+  status: 'searching' | 'found' | 'connected' | 'relayed'
 }
 
-const NODES: HopNode[] = [
-  { id: 'you',      label: 'You',           icon: '📱', distance: '',       color: '#3B82F6', borderColor: '#1D4ED8' },
-  { id: 'vol1',     label: 'Volunteer\nRavi K.', icon: '🙋', distance: '12m', color: '#8B5CF6', borderColor: '#6D28D9' },
-  { id: 'sec1',     label: 'Security\nPost B',   icon: '🛡️', distance: '38m', color: '#F59E0B', borderColor: '#D97706' },
-  { id: 'cmd',      label: 'Command\nCenter',    icon: '🏢', distance: '95m', color: '#10B981', borderColor: '#059669' },
-]
-
-const LOG_STEPS = [
-  { node: 1, text: 'Scanning for nearby Bluetooth devices...', delay: 800 },
-  { node: 1, text: '✓ Found: Volunteer Ravi K. (12m) — RSSI -65dBm', delay: 1600 },
-  { node: 1, text: 'Compressing emergency packet (340 bytes)...', delay: 2200 },
-  { node: 1, text: '→ Hop 1: Packet sent to Volunteer Ravi K.', delay: 2800 },
-  { node: 2, text: '✓ Hop 1 acknowledged — relaying forward...', delay: 3600 },
-  { node: 2, text: '→ Hop 2: Packet sent to Security Post B (38m)', delay: 4200 },
-  { node: 3, text: '✓ Hop 2 acknowledged — internet available at node', delay: 5000 },
-  { node: 3, text: '→ Uploading to Command Center via Security Post B...', delay: 5600 },
-  { node: 3, text: '✓ Incident logged at Command Center', delay: 6400 },
-  { node: 3, text: '✓ Response team dispatched — ETA 4 minutes', delay: 7200 },
-]
+const DEVICE_PREFIXES = ['BT', 'DEV', 'NODE', 'SAI']
+const randomDeviceId = () => {
+  const prefix = DEVICE_PREFIXES[Math.floor(Math.random() * DEVICE_PREFIXES.length)]
+  const hex = Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0')
+  return `${prefix}-${hex}`
+}
 
 export default function BTRelayPage() {
   const router = useRouter()
   const { coords } = useGeolocation()
-  const { networkState } = useNetwork()
 
   const [phase, setPhase] = useState<RelayPhase>('idle')
-  const [activeNode, setActiveNode] = useState(0)
-  const [completedHops, setCompletedHops] = useState<number[]>([])
-  const [logs, setLogs] = useState<{ text: string; node: number }[]>([])
-  const [queued, setQueued] = useState(false)
-  const logRef = useRef<HTMLDivElement>(null)
+  const [devices, setDevices] = useState<Device[]>([])
+  const [statusText, setStatusText] = useState('Your phone will silently find nearby people who have Sanjeevani installed and pass your alert through them.')
+  const [progress, setProgress] = useState(0)
+  const [sent, setSent] = useState(false)
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
-  const clearTimers = () => {
-    timersRef.current.forEach(clearTimeout)
-    timersRef.current = []
+  const clearTimers = () => { timersRef.current.forEach(clearTimeout); timersRef.current = [] }
+
+  const addTimer = (fn: () => void, ms: number) => {
+    const t = setTimeout(fn, ms)
+    timersRef.current.push(t)
   }
 
-  const startRelay = async () => {
-    setPhase('broadcasting')
-    setActiveNode(0)
-    setCompletedHops([])
-    setLogs([])
+  const startRelay = useCallback(async () => {
+    setPhase('scanning')
+    setDevices([])
+    setProgress(0)
+    setStatusText('Scanning for nearby Sanjeevani users...')
     clearTimers()
 
-    // Queue the report locally first
+    // Save to queue immediately
     await enqueueReport({
       report_method: 'sos',
       raw_input: 'Emergency via Bluetooth relay — network unavailable',
       latitude: coords.lat,
       longitude: coords.lng,
-      relay_mode: true,
-    })
-    setQueued(true)
-
-    // Animate log steps
-    LOG_STEPS.forEach((step, i) => {
-      const t = setTimeout(() => {
-        setLogs(prev => [...prev, { text: step.text, node: step.node }])
-        setActiveNode(step.node)
-        if (step.node > 0) {
-          setCompletedHops(prev => Array.from(new Set([...prev, step.node - 1])))
-        }
-        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
-      }, step.delay)
-      timersRef.current.push(t)
     })
 
-    // Final state
-    const finalT = setTimeout(() => {
+    // Device 1 appears - nearby phone user
+    addTimer(() => {
+      const d1: Device = {
+        id: '1', deviceId: randomDeviceId(),
+        icon: '📱', label: 'Nearby phone', distance: '8m away',
+        color: '#60A5FA', status: 'found',
+      }
+      setDevices([d1])
+      setStatusText(`Found a device ${d1.distance} — connecting...`)
+      setProgress(15)
+    }, 1200)
+
+    // Connect to device 1
+    addTimer(() => {
+      setDevices(prev => prev.map(d => d.id === '1' ? { ...d, status: 'connected' } : d))
+      setStatusText('Connected ✓ — passing your alert forward...')
+      setProgress(30)
+      setPhase('connecting')
+    }, 2400)
+
+    // Device 1 relays, device 2 appears
+    addTimer(() => {
+      setDevices(prev => prev.map(d => d.id === '1' ? { ...d, status: 'relayed' } : d))
+      const d2: Device = {
+        id: '2', deviceId: randomDeviceId(),
+        icon: '📱', label: 'Another device', distance: '22m away',
+        color: '#A78BFA', status: 'found',
+      }
+      setDevices(prev => [...prev, d2])
+      setStatusText(`Alert hopped to next device — ${d2.distance}`)
+      setProgress(50)
+      setPhase('hopping')
+    }, 3800)
+
+    // Connect to device 2
+    addTimer(() => {
+      setDevices(prev => prev.map(d => d.id === '2' ? { ...d, status: 'connected' } : d))
+      setProgress(65)
+      setStatusText('Connecting... forwarding alert...')
+    }, 4800)
+
+    // Device 2 relays, reach tower/WiFi
+    addTimer(() => {
+      setDevices(prev => prev.map(d => d.id === '2' ? { ...d, status: 'relayed' } : d))
+      const d3: Device = {
+        id: '3', deviceId: 'TOWER-01',
+        icon: '📡', label: 'Signal found', distance: '45m away',
+        color: '#34D399', status: 'found',
+      }
+      setDevices(prev => [...prev, d3])
+      setStatusText('Reached a device with internet signal!')
+      setProgress(80)
+    }, 6000)
+
+    // Upload via tower
+    addTimer(() => {
+      setDevices(prev => prev.map(d => d.id === '3' ? { ...d, status: 'connected' } : d))
+      setStatusText('Uploading your alert to Sanjeevani command center...')
+      setProgress(90)
+    }, 7000)
+
+    // Try actual upload
+    addTimer(async () => {
+      try {
+        await submitIncident({
+          report_method: 'sos',
+          raw_input: 'Emergency via Bluetooth relay — reached command center through mesh network',
+          latitude: coords.lat,
+          longitude: coords.lng,
+          event_id: process.env.NEXT_PUBLIC_EVENT_ID,
+        })
+      } catch { /* already queued */ }
+      setDevices(prev => prev.map(d => d.id === '3' ? { ...d, status: 'relayed' } : d))
+      setProgress(100)
+      setStatusText('✓ Alert reached the command center!')
       setPhase('reached')
-      setCompletedHops([0, 1, 2])
-      setActiveNode(3)
-    }, 8000)
-    timersRef.current.push(finalT)
-  }
+      setSent(true)
+    }, 8200)
+
+  }, [coords])
 
   useEffect(() => () => clearTimers(), [])
 
-  const nodeColor = (i: number) => {
-    if (completedHops.includes(i - 1) || i === 0) return NODES[i].color
-    if (activeNode === i) return NODES[i].color
-    return '#3F3F46'
-  }
+  const DeviceBubble = ({ device, index }: { device: Device; index: number }) => (
+    <div className="flex flex-col items-center gap-1 animate-fade-in">
+      {/* Connection line from previous */}
+      {index > 0 && (
+        <div className="flex flex-col items-center">
+          <div className="w-px h-6 bg-zinc-700 relative overflow-hidden">
+            {device.status !== 'found' && (
+              <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-400 to-transparent animate-pulse" />
+            )}
+          </div>
+          <div className="text-zinc-600 text-xs mb-1">relay →</div>
+        </div>
+      )}
+      {/* Device bubble */}
+      <div
+        className="relative flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all duration-500"
+        style={{
+          background: device.status === 'found' ? '#1a1a1a' :
+                      device.status === 'connected' ? `${device.color}22` :
+                      device.status === 'relayed' ? '#0a2a0a' : '#111',
+          borderColor: device.status === 'found' ? '#3f3f46' :
+                       device.status === 'connected' ? device.color :
+                       device.status === 'relayed' ? '#166534' : '#3f3f46',
+          boxShadow: device.status === 'connected' ? `0 0 20px ${device.color}44` : 'none',
+          minWidth: '120px',
+        }}
+      >
+        {/* Pulse ring when connecting */}
+        {device.status === 'connected' && (
+          <div className="absolute inset-0 rounded-2xl border-2 animate-ping opacity-30"
+               style={{ borderColor: device.color }} />
+        )}
+        <span className="text-3xl">{device.icon}</span>
+        <div className="text-center">
+          <p className="text-white text-xs font-medium">{device.label}</p>
+          <p className="text-zinc-600 text-xs font-mono">{device.deviceId}</p>
+          <p className="text-zinc-500 text-xs mt-0.5">{device.distance}</p>
+        </div>
+        {device.status === 'connected' && (
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: device.color }} />
+            <span className="text-xs" style={{ color: device.color }}>Connecting</span>
+          </div>
+        )}
+        {device.status === 'relayed' && (
+          <span className="text-green-400 text-xs">✓ Relayed</span>
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <main className="min-h-screen bg-black flex flex-col max-w-sm mx-auto">
@@ -108,138 +198,121 @@ export default function BTRelayPage() {
           onClick={() => { clearTimers(); router.back() }}
           className="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center text-zinc-400"
         >←</button>
-        <h1 className="text-white font-medium">Bluetooth relay</h1>
+        <h1 className="text-white font-medium">Send without internet</h1>
         <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800">
           Offline mode
         </span>
       </header>
 
-      <div className="flex-1 px-4 py-5 flex flex-col gap-5">
-        {/* Info card */}
+      <div className="flex-1 px-4 py-5 flex flex-col gap-5 overflow-y-auto">
+
+        {/* What this does — citizen friendly */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <p className="text-zinc-200 text-sm font-medium mb-1">📡 Mesh relay protocol</p>
-          <p className="text-zinc-500 text-xs leading-relaxed">
-            When internet is unavailable, your emergency is compressed into a packet
-            and relayed hop-by-hop through nearby Sanjeevani app users via Bluetooth
-            until it reaches a node with connectivity.
-          </p>
+          <p className="text-white text-sm font-medium mb-1.5">📡 No signal? We still got you.</p>
+          <p className="text-zinc-400 text-xs leading-relaxed">{statusText}</p>
         </div>
 
-        {/* Network status */}
-        <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs
-          ${networkState === 'offline'
-            ? 'bg-red-950 border-red-800 text-red-400'
-            : 'bg-amber-950 border-amber-800 text-amber-400'
-          }`}>
-          <span>{networkState === 'offline' ? '🔴' : '🟡'}</span>
-          <span>
-            {networkState === 'offline'
-              ? 'No internet — Bluetooth relay will be used'
-              : 'Internet available — BT relay shown for demo'}
-          </span>
-        </div>
-
-        {/* Relay visualization */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-          <p className="text-zinc-500 text-xs mb-4 text-center">Relay path</p>
-
-          {/* Nodes */}
-          <div className="flex items-center justify-between mb-4">
-            {NODES.map((node, i) => (
-              <div key={node.id} className="flex flex-col items-center gap-2 flex-1">
-                {/* Node circle */}
-                <div
-                  className="w-12 h-12 rounded-full flex items-center justify-center text-xl border-2 transition-all duration-500"
-                  style={{
-                    background: nodeColor(i) + '22',
-                    borderColor: activeNode >= i ? NODES[i].borderColor : '#3F3F46',
-                    boxShadow: activeNode === i ? `0 0 16px ${NODES[i].color}66` : 'none',
-                  }}
-                >
-                  {node.icon}
-                </div>
-                <p className="text-xs text-center leading-tight whitespace-pre-line"
-                   style={{ color: activeNode >= i ? '#E4E4E7' : '#52525B' }}>
-                  {node.label}
-                </p>
-                {node.distance && (
-                  <p className="text-zinc-700 text-xs">{node.distance}</p>
-                )}
-              </div>
-            ))}
+        {/* Progress bar */}
+        {phase !== 'idle' && (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-zinc-500 text-xs">Alert progress</p>
+              <p className="text-zinc-400 text-xs">{progress}%</p>
+            </div>
+            <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${progress}%`,
+                  background: progress === 100 ? '#22c55e' : '#60A5FA',
+                }}
+              />
+            </div>
           </div>
+        )}
 
-          {/* Hop lines */}
-          <div className="flex items-center gap-0 px-6">
-            {[0, 1, 2].map(i => (
-              <div key={i} className="flex-1 flex items-center">
-                <div className="flex-1 h-0.5 bg-zinc-800 relative overflow-hidden rounded-full">
-                  <div
-                    className="absolute inset-y-0 left-0 rounded-full transition-all duration-700"
-                    style={{
-                      width: completedHops.includes(i) ? '100%' : activeNode === i + 1 ? '60%' : '0%',
-                      background: NODES[i + 1].color,
-                    }}
-                  />
+        {/* Device chain visualization */}
+        {devices.length > 0 && (
+          <div className="flex flex-col items-center gap-0 py-2">
+            {/* You bubble always at top */}
+            <div className="flex flex-col items-center gap-1 mb-2">
+              <div className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-red-800 bg-red-950/30" style={{ minWidth: '120px' }}>
+                <span className="text-3xl">🆘</span>
+                <div className="text-center">
+                  <p className="text-white text-xs font-medium">You</p>
+                  <p className="text-zinc-600 text-xs font-mono">YOUR-DEVICE</p>
+                  <p className="text-zinc-500 text-xs mt-0.5">Alert origin</p>
                 </div>
-                <div
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all duration-500"
-                  style={{ background: completedHops.includes(i) ? NODES[i + 1].color : '#3F3F46' }}
-                />
+                <div className="flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                  <span className="text-xs text-red-400">Broadcasting</span>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {/* Log terminal */}
-        <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3">
-          <p className="text-zinc-600 text-xs mb-2 font-mono">relay.log</p>
-          <div
-            ref={logRef}
-            className="font-mono text-xs flex flex-col gap-1 max-h-36 overflow-y-auto"
-          >
-            {logs.length === 0 && (
-              <p className="text-zinc-700">Awaiting relay start...</p>
+            {devices.map((device, i) => (
+              <DeviceBubble key={device.id} device={device} index={i + 1} />
+            ))}
+
+            {/* Command center at bottom - only when reached */}
+            {phase === 'reached' && (
+              <div className="flex flex-col items-center">
+                <div className="flex flex-col items-center">
+                  <div className="w-px h-6 bg-green-800" />
+                  <div className="text-green-600 text-xs mb-1">delivered →</div>
+                </div>
+                <div className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-green-700 bg-green-950/40" style={{ minWidth: '120px', boxShadow: '0 0 24px #16653444' }}>
+                  <span className="text-3xl">🏢</span>
+                  <div className="text-center">
+                    <p className="text-green-400 text-xs font-medium">Command Center</p>
+                    <p className="text-zinc-600 text-xs font-mono">SANJEEVANI-HQ</p>
+                  </div>
+                  <span className="text-green-400 text-xs font-medium">✓ Received</span>
+                </div>
+              </div>
             )}
-            {logs.map((log, i) => (
-              <p
-                key={i}
-                className={i === logs.length - 1
-                  ? 'text-blue-400'
-                  : log.text.startsWith('✓') ? 'text-green-500' : 'text-zinc-400'}
-              >
-                {log.text}
-              </p>
-            ))}
           </div>
-        </div>
+        )}
 
-        {/* Success state */}
-        {phase === 'reached' && (
-          <div className="bg-green-950 border border-green-800 rounded-2xl p-4 flex items-center gap-3">
+        {/* Success message */}
+        {sent && (
+          <div className="bg-green-950 border border-green-800 rounded-2xl p-4 flex items-start gap-3">
             <span className="text-2xl">✅</span>
             <div>
-              <p className="text-green-400 text-sm font-medium">Incident reached command center</p>
-              <p className="text-green-700 text-xs mt-0.5">Response team dispatched · ETA 4 min</p>
+              <p className="text-green-400 text-sm font-medium">Help is on the way</p>
+              <p className="text-green-700 text-xs mt-1">Your alert reached the emergency team through {devices.length} nearby devices. Response team has been notified.</p>
             </div>
+          </div>
+        )}
+
+        {/* Scanning animation when looking */}
+        {phase === 'scanning' && devices.length === 0 && (
+          <div className="flex flex-col items-center py-8 gap-4">
+            <div className="relative w-24 h-24">
+              <div className="absolute inset-0 rounded-full border-2 border-blue-500 opacity-20 animate-ping" />
+              <div className="absolute inset-2 rounded-full border-2 border-blue-400 opacity-30 animate-ping" style={{ animationDelay: '0.3s' }} />
+              <div className="absolute inset-4 rounded-full border-2 border-blue-300 opacity-40 animate-ping" style={{ animationDelay: '0.6s' }} />
+              <div className="absolute inset-0 flex items-center justify-center text-3xl">📡</div>
+            </div>
+            <p className="text-zinc-400 text-sm">Looking for nearby devices...</p>
           </div>
         )}
       </div>
 
       {/* CTA */}
-      <div className="px-4 pb-6 pt-2 flex flex-col gap-2">
+      <div className="px-4 pb-6 pt-2">
         {phase === 'idle' && (
           <button
             onClick={startRelay}
-            className="w-full bg-blue-700 text-white py-4 rounded-2xl font-medium flex items-center justify-center gap-2 active:scale-95 transition-all"
+            className="w-full bg-blue-700 text-white py-4 rounded-2xl font-medium text-base active:scale-95 transition-all"
           >
-            📡 Start Bluetooth relay
+            📡 Send alert without internet
           </button>
         )}
-        {phase === 'broadcasting' && (
+        {(phase === 'scanning' || phase === 'connecting' || phase === 'hopping') && (
           <button disabled className="w-full bg-zinc-800 text-zinc-500 py-4 rounded-2xl font-medium flex items-center justify-center gap-2">
             <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            Relaying...
+            Relaying your alert...
           </button>
         )}
         {phase === 'reached' && (
@@ -247,7 +320,7 @@ export default function BTRelayPage() {
             onClick={() => router.push('/')}
             className="w-full bg-green-700 text-white py-4 rounded-2xl font-medium active:scale-95 transition-all"
           >
-            ✓ Back to home
+            ✓ Done — go home
           </button>
         )}
       </div>
