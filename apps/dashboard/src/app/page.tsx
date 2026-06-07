@@ -210,9 +210,14 @@ export default function DashboardPage() {
         {/* Demo panel */}
         {showDemo && (
           <aside className="w-80 flex-shrink-0 border-l border-zinc-800 overflow-y-auto bg-zinc-900 p-4">
-            <DemoScenarioEngine onIncidentCreated={(id) => {
-              setTimeout(loadAll, 3000)
-            }} />
+            <DemoScenarioEngine
+              onIncidentCreated={(id) => {
+                setTimeout(loadAll, 2000)
+              }}
+              onRefreshNeeded={() => {
+                loadAll()
+              }}
+            />
           </aside>
         )}
 
