@@ -20,6 +20,8 @@ export default function DashboardPage() {
   const [resources, setResources]         = useState<Resource[]>([])
   const [selectedIncident, setSelected]   = useState<Incident | null>(null)
   const [activeRoute, setActiveRoute]     = useState<RoutePoint[] | null>(null)
+  const [movingResource, setMovingResource] = useState<Resource | null>(null)
+  const [movingTarget, setMovingTarget]   = useState<{ lat: number; lng: number } | null>(null)
   const [stats, setStats]                 = useState<EventStats | null>(null)
   const [brief, setBrief]                 = useState<string | null>(null)
   const [briefLoading, setBriefLoading]   = useState(true)
@@ -60,36 +62,16 @@ export default function DashboardPage() {
     }
   }, [])
 
-  // Simulate resource movement — nudges dispatched resources toward their incidents
-  const simulateResourceMovement = useCallback(() => {
-    setResources(prev => prev.map(r => {
-      if (r.status !== 'dispatched') return r
-      return {
-        ...r,
-        latitude:  r.latitude  + (Math.random() - 0.5) * 0.0003,
-        longitude: r.longitude + (Math.random() - 0.5) * 0.0003,
-      }
-    }))
-  }, [])
-
   useEffect(() => {
     loadAll()
     loadBrief()
     const briefInterval = setInterval(loadBrief, 90_000)
     const dataInterval  = setInterval(loadAll, 15_000)
-    resourceSimRef.current = setInterval(simulateResourceMovement, 3000)
-    return () => {
-      clearInterval(briefInterval)
-      clearInterval(dataInterval)
-      if (resourceSimRef.current) clearInterval(resourceSimRef.current)
-    }
-  }, [loadAll, loadBrief, simulateResourceMovement])
+    return () => { clearInterval(briefInterval); clearInterval(dataInterval) }
+  }, [loadAll, loadBrief])
 
   useRealtimeUpdates(EVENT_ID, {
-    onIncidentInsert: (inc) => {
-      setIncidents(prev => [inc, ...prev])
-      setLastUpdated(new Date())
-    },
+    onIncidentInsert: (inc) => { setIncidents(prev => [inc, ...prev]); setLastUpdated(new Date()) },
     onIncidentUpdate: (updated) => {
       setIncidents(prev => prev.map(i => i.id === updated.id ? updated : i))
       if (selectedIncident?.id === updated.id) setSelected(updated)
@@ -102,9 +84,28 @@ export default function DashboardPage() {
 
   const handleDispatch = useCallback((dispatch: Dispatch) => {
     setActiveRoute(dispatch.route)
+
+    // Find the dispatched resource and incident for animation
+    const resource = resources.find(r => r.id === dispatch.resource_id)
+    const incident = incidents.find(i => i.id === dispatch.incident_id)
+    if (resource && incident) {
+      setMovingResource(resource)
+      setMovingTarget({ lat: incident.latitude, lng: incident.longitude })
+      // Clear moving animation after 12 seconds
+      setTimeout(() => { setMovingResource(null); setMovingTarget(null) }, 12_000)
+    }
+
+    // Clear route after 35 seconds
     setTimeout(() => setActiveRoute(null), 35_000)
     setTimeout(loadAll, 2000)
-  }, [loadAll])
+  }, [resources, incidents, loadAll])
+
+  const handleSelectIncident = useCallback((inc: Incident) => {
+    setSelected(inc)
+    setActiveRoute(null)
+    // Close demo panel when incident selected
+    if (showDemo) setShowDemo(false)
+  }, [showDemo])
 
   const visibleIncidents = incidents.filter(i =>
     showResolved ? true : i.status !== 'resolved'
@@ -114,7 +115,7 @@ export default function DashboardPage() {
     <div className="h-screen bg-zinc-950 text-white flex flex-col overflow-hidden">
 
       {/* Top bar */}
-      <header className="flex items-center gap-4 px-5 py-2.5 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
+      <header className="flex items-center gap-3 px-5 py-2.5 bg-zinc-900 border-b border-zinc-800 flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-red-600 flex items-center justify-center font-bold text-xs">S</div>
           <div>
@@ -123,35 +124,22 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Map controls */}
         <div className="flex items-center gap-2 ml-4">
           <button
             onClick={() => setShowHeatmap(h => !h)}
             className={`text-xs px-2.5 py-1 rounded-lg border transition-all
-              ${showHeatmap
-                ? 'bg-amber-950 border-amber-700 text-amber-400'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
-          >
-            🌡 Heatmap
-          </button>
+              ${showHeatmap ? 'bg-amber-950 border-amber-700 text-amber-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
+          >🌡 Heatmap</button>
           <button
             onClick={() => setShowResolved(s => !s)}
             className={`text-xs px-2.5 py-1 rounded-lg border transition-all
-              ${showResolved
-                ? 'bg-green-950 border-green-700 text-green-400'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
-          >
-            ✅ Resolved
-          </button>
+              ${showResolved ? 'bg-green-950 border-green-700 text-green-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
+          >✅ Resolved</button>
           <button
             onClick={() => setShowDemo(d => !d)}
             className={`text-xs px-2.5 py-1 rounded-lg border transition-all
-              ${showDemo
-                ? 'bg-purple-950 border-purple-700 text-purple-400'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
-          >
-            🎬 Demo
-          </button>
+              ${showDemo ? 'bg-purple-950 border-purple-700 text-purple-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}
+          >🎬 Demo</button>
         </div>
 
         <div className="ml-auto flex items-center gap-4">
@@ -159,21 +147,17 @@ export default function DashboardPage() {
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
             <span className="text-green-400 text-xs">Live</span>
           </div>
-          <span className="text-zinc-600 text-xs">
-            {lastUpdated.toLocaleTimeString()}
-          </span>
+          <span className="text-zinc-600 text-xs">{lastUpdated.toLocaleTimeString()}</span>
           <button
             onClick={() => { loadAll(); loadBrief() }}
             className="text-zinc-500 hover:text-white text-xs border border-zinc-700 rounded-lg px-2 py-1 transition-colors"
-          >
-            ↻ Refresh
-          </button>
+          >↻ Refresh</button>
         </div>
       </header>
 
       <div className="flex-1 flex overflow-hidden">
 
-        {/* Left sidebar */}
+        {/* Left sidebar — incident queue */}
         <aside className="w-72 flex-shrink-0 flex flex-col border-r border-zinc-800 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
             <h2 className="text-sm font-medium text-white">Incident queue</h2>
@@ -183,7 +167,7 @@ export default function DashboardPage() {
             <IncidentQueue
               incidents={visibleIncidents}
               selectedId={selectedIncident?.id || null}
-              onSelect={inc => { setSelected(inc); setActiveRoute(null) }}
+              onSelect={handleSelectIncident}
               loading={loading}
             />
           </div>
@@ -199,8 +183,10 @@ export default function DashboardPage() {
               incidents={visibleIncidents}
               resources={resources}
               activeRoute={activeRoute}
+              movingResource={movingResource}
+              movingTarget={movingTarget}
               selectedIncident={selectedIncident}
-              onIncidentClick={setSelected}
+              onIncidentClick={handleSelectIncident}
               center={MAP_CENTER}
               showHeatmap={showHeatmap}
             />
@@ -211,17 +197,13 @@ export default function DashboardPage() {
         {showDemo && (
           <aside className="w-80 flex-shrink-0 border-l border-zinc-800 overflow-y-auto bg-zinc-900 p-4">
             <DemoScenarioEngine
-              onIncidentCreated={(id) => {
-                setTimeout(loadAll, 2000)
-              }}
-              onRefreshNeeded={() => {
-                loadAll()
-              }}
+              onIncidentCreated={() => { setTimeout(loadAll, 2000) }}
+              onRefreshNeeded={() => loadAll()}
             />
           </aside>
         )}
 
-        {/* Right panel */}
+        {/* Incident detail panel */}
         {selectedIncident && !showDemo && (
           <aside className="w-80 flex-shrink-0 border-l border-zinc-800 overflow-hidden">
             <IncidentPanel
