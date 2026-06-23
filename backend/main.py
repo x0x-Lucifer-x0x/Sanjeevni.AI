@@ -61,13 +61,7 @@ async def health():
     return {"status": "ok", "service": "sanjeevani-ai", "version": "1.0.0"}
 
 
-@app.get("/")
-async def root():
-    return {
-        "message": "Sanjeevani AI Emergency Response API",
-        "docs": "/docs",
-        "health": "/health",
-    }
+
 
 from core.config import get_settings
 
