@@ -97,3 +97,7 @@ async def find_or_create_canonical(
             canonical_id=None,
             confirmation_count=1,
         )
+
+    except Exception as e:
+        logger.error(f"Dedup engine error: {e}")
+        return DeduplicationResult(action="new", canonical_id=None, confirmation_count=1)
